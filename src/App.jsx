@@ -190,7 +190,7 @@ function Hero({ anime }) {
   );
 }
 
-function AnimeCard({ anime }) {
+function AnimeCard({ anime, onRemove }) {
   return (
     <div className="anime-card">
       <div className="card-image-wrapper">
@@ -200,6 +200,18 @@ function AnimeCard({ anime }) {
           loading="lazy"
         />
         <div className="episodes-badge">{anime.episodes || '?'} 話</div>
+        <button
+          className="delete-button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (window.confirm(`「${anime.title.native || anime.title.romaji}」を削除しますか？`)) {
+              onRemove(anime.id);
+            }
+          }}
+          title="削除"
+        >
+          🗑️
+        </button>
       </div>
       <div className="card-info">
         <h3>{anime.title.native || anime.title.romaji}</h3>
@@ -221,8 +233,14 @@ function AnimeCard({ anime }) {
 // ============================================================================
 
 function App() {
-  const [animeList, setAnimeList] = useState([]);
-  const [loadingStatus, setLoadingStatus] = useState({ loaded: 0, total: WATCHED_TITLES.length, active: true });
+  // Initialize state from localStorage if available
+  const [animeList, setAnimeList] = useState(() => {
+    const saved = localStorage.getItem('myAnimeList');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [loadingStatus, setLoadingStatus] = useState({ loaded: 0, total: WATCHED_TITLES.length, active: false });
+  const [isAdding, setIsAdding] = useState(false); // New state for add loading
   const [featuredAnime, setFeaturedAnime] = useState(null);
   const [error, setError] = useState(null);
   const ignoreFetch = useRef(false);
@@ -231,12 +249,30 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGenre, setSelectedGenre] = useState("All");
 
+  // New Title Input
+  const [newTitle, setNewTitle] = useState("");
+
+  // Persist to localStorage whenever animeList changes
+  useEffect(() => {
+    if (animeList.length > 0) {
+      localStorage.setItem('myAnimeList', JSON.stringify(animeList));
+    }
+  }, [animeList]);
+
   // Initial Data Fetching
   useEffect(() => {
+    // If we already have data (from localStorage), don't fetch initial list
+    if (animeList.length > 0) {
+      const random = animeList[Math.floor(Math.random() * animeList.length)];
+      setFeaturedAnime(random);
+      return;
+    }
+
     if (ignoreFetch.current) return;
     ignoreFetch.current = true;
 
     const loadAllAnime = async () => {
+      setLoadingStatus(prev => ({ ...prev, active: true }));
       const results = [];
       let failureCount = 0;
 
@@ -251,7 +287,7 @@ function App() {
           results.push(data);
           // Set featured anime as soon as we have at least one, if not set
           if (!featuredAnime && results.length > 0) {
-            // Placeholder
+            // Placeholder logic handled later
           }
         } else {
           failureCount++;
@@ -280,6 +316,44 @@ function App() {
 
     loadAllAnime();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAddAnime = async () => {
+    if (!newTitle.trim()) return;
+    setIsAdding(true);
+    setError(null);
+
+    const data = await fetchAnimeDetails(newTitle);
+
+    if (data) {
+      // Check for duplicates
+      if (animeList.some(a => a.id === data.id)) {
+        setError("その作品は既に追加されています。");
+      } else {
+        setAnimeList(prev => [data, ...prev]);
+        setNewTitle("");
+        setError(null);
+      }
+    } else {
+      setError("作品が見つかりませんでした。タイトルが正しいか確認してください。");
+    }
+    setIsAdding(false);
+  };
+
+  const handleRemoveAnime = (id) => {
+    setAnimeList(prev => {
+      const updated = prev.filter(anime => anime.id !== id);
+      // Update localStorage immediately inside setter or via useEffect logic.
+      // Since we have the useEffect hook watching animeList, it will handle it.
+      // BUT: If the list becomes empty, the useEffect with > 0 check won't run/clean up properly if we want to clear local storage.
+      // However logic says > 0. Let's fix persistence logic to handle empty array if needed, 
+      // but "if animeList.length > 0" in useEffect means we never save empty list? 
+      // It's safer to save empty list too if user deleted everything.
+      if (updated.length === 0) {
+        localStorage.removeItem('myAnimeList');
+      }
+      return updated;
+    });
+  };
 
   // Derived state for genres
   const uniqueGenres = useMemo(() => {
@@ -346,6 +420,7 @@ function App() {
             />
           </div>
 
+
           <div className="filter-box">
             <select
               value={selectedGenre}
@@ -357,6 +432,21 @@ function App() {
               ))}
             </select>
           </div>
+
+          <div className="add-anime-box">
+            <div className="add-input-wrapper">
+              <input
+                type="text"
+                placeholder="新しい作品を追加 (例: NARUTO)..."
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAddAnime()}
+              />
+              <button onClick={handleAddAnime} disabled={isAdding}>
+                {isAdding ? '取得中...' : '追加'}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="results-count">
@@ -365,7 +455,7 @@ function App() {
 
         <div className="anime-grid">
           {filteredList.map(anime => (
-            <AnimeCard key={anime.id} anime={anime} />
+            <AnimeCard key={anime.id} anime={anime} onRemove={handleRemoveAnime} />
           ))}
         </div>
 
